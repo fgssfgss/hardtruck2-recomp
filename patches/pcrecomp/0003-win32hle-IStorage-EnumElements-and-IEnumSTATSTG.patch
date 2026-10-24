@@ -1,0 +1,156 @@
+From b02a1898a5db46b6ed281322fe24cd187f053cdc Mon Sep 17 00:00:00 2001
+From: Andrew R." <andrew612.ru@gmail.com>
+Date: Sat, 24 Oct 2026 21:26:10 +0300
+Subject: [PATCH 3/5] win32hle: IStorage::EnumElements and IEnumSTATSTG
+
+Hard Truck 2 walks its level storages with EnumElements to find the AI
+road graph; with E_NOTIMPL it logged "Enum Elements failed" and ended
+the run with "No nodes were defined".
+
+The enumerator is an object on the storage's node, handing out its
+children in the compound file's order (length, then upper case, as
+Windows' directory tree walks them); Next, Skip, Reset and Clone, names
+allocated for the caller to CoTaskMemFree.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ runtime/win32hle/storage.c          | 58 ++++++++++++++++++++++++++++-
+ runtime/win32hle/storage_selftest.c | 28 ++++++++++++++
+ 2 files changed, 84 insertions(+), 2 deletions(-)
+
+diff --git a/runtime/win32hle/storage.c b/runtime/win32hle/storage.c
+index 79047c5..257af35 100644
+--- a/runtime/win32hle/storage.c
++++ b/runtime/win32hle/storage.c
+@@ -329,7 +329,7 @@ static int write_cfb(const char *path, node_t *root) {
+ }
+ 
+ /* ---- the objects ---- */
+-static uint32_t g_vt_stg, g_vt_stm;
++static uint32_t g_vt_stg, g_vt_stm, g_vt_enum;
+ typedef struct { file_t *file; node_t *node; uint32_t pos; } obj_t;   /* at +8 of the COM object */
+ #define OBJ(self) ((obj_t *)hle_ptr(MEM32((self) + 8)))   /* in guest memory (hle_alloc): the VA fits */
+ 
+@@ -503,6 +503,53 @@ static void st_DestroyElement(void) {
+ }
+ static void st_SetClass(void) { obj_t *o = OBJ(A32(0)); memcpy(o->node->clsid, APTR(1), 16); o->file->dirty = 1; RET(S_OK, 2); }
+ static void st_Stat(void) { stat_of(A32(1), OBJ(A32(0))->node, A32(2) & 1); RET(S_OK, 3); }
++/* IStorage::EnumElements and its IEnumSTATSTG: an object on the storage's
++ * node whose pos is the next child to hand out, in the compound file's own
++ * order (length, then upper case: Windows' red-black directory walks the
++ * same way). Names in the STATSTGs are the caller's (CoTaskMemFree). */
++static int sorted_children(node_t *p, node_t **out, int max) {
++    int n = 0;
++    for (node_t *c = p->child; c && n < max; c = c->next) out[n++] = c;
++    for (int i = 1; i < n; i++)                          /* insertion sort: a storage holds a handful */
++        for (int j = i; j > 0 && wcmp_upper(out[j - 1]->name, out[j]->name) > 0; j--) {
++            node_t *t = out[j]; out[j] = out[j - 1]; out[j - 1] = t;
++        }
++    return n;
++}
++static void st_EnumElements(void) {                      /* (this, r1, r2, r3, &enum) */
++    obj_t *o = OBJ(A32(0));
++    if (!A32(4)) RET(STG_E_INVALIDPOINTER, 5);
++    MEM32(A32(4)) = new_obj(g_vt_enum, o->file, o->node);
++    RET(S_OK, 5);
++}
++static void en_QueryInterface(void) { qi(0x0Du); }      /* IEnumSTATSTG {0000000D-...} */
++static void en_Next(void) {                              /* (this, celt, STATSTG*, &fetched) */
++    obj_t *o = OBJ(A32(0));
++    node_t *kids[1024];
++    int n = sorted_children(o->node, kids, 1024);
++    uint32_t want = A32(1), got = 0;
++    while (got < want && (int)o->pos < n) stat_of(A32(2) + 72u * got++, kids[o->pos++], 0);
++    if (A32(3)) MEM32(A32(3)) = got;
++    RET(got == want ? S_OK : S_FALSE, 4);
++}
++static void en_Skip(void) {                              /* (this, celt) */
++    obj_t *o = OBJ(A32(0));
++    node_t *kids[1024];
++    uint32_t n = (uint32_t)sorted_children(o->node, kids, 1024);
++    o->pos += A32(1);
++    if (o->pos > n) { o->pos = n; RET(S_FALSE, 2); }
++    RET(S_OK, 2);
++}
++static void en_Reset(void) { OBJ(A32(0))->pos = 0; RET(S_OK, 1); }
++static void en_Clone(void) {                             /* (this, &enum) */
++    obj_t *o = OBJ(A32(0));
++    if (!A32(1)) RET(STG_E_INVALIDPOINTER, 2);
++    uint32_t c = new_obj(g_vt_enum, o->file, o->node);
++    OBJ(c)->pos = o->pos;
++    MEM32(A32(1)) = c;
++    RET(S_OK, 2);
++}
++
+ static void x_notimpl_2(void) { RET(E_NOTIMPL, 2); }
+ static void x_notimpl_4(void) { RET(E_NOTIMPL, 4); }
+ static void x_notimpl_5(void) { RET(E_NOTIMPL, 5); }
+@@ -524,11 +571,18 @@ static void vtables(void) {
+         { "IStorage::OpenStream", st_OpenStream }, { "IStorage::CreateStorage", st_CreateStorage },
+         { "IStorage::OpenStorage", st_OpenStorage }, { "IStorage::CopyTo", x_notimpl_5 },
+         { "IStorage::MoveElementTo", x_notimpl_5 }, { "IStorage::Commit", st_Commit }, { "IStorage::Revert", x_ok_1 },
+-        { "IStorage::EnumElements", x_notimpl_5 }, { "IStorage::DestroyElement", st_DestroyElement },
++        { "IStorage::EnumElements", st_EnumElements }, { "IStorage::DestroyElement", st_DestroyElement },
+         { "IStorage::RenameElement", x_notimpl_3 }, { "IStorage::SetElementTimes", x_notimpl_5 },
+         { "IStorage::SetClass", st_SetClass }, { "IStorage::SetStateBits", x_ok_3 }, { "IStorage::Stat", st_Stat }, { 0, 0 } };
++    static const win32hle_shim en[] = {
++        { "IEnumSTATSTG::QueryInterface", en_QueryInterface }, { "IEnumSTATSTG::AddRef", hle_com_AddRef },
++        { "IEnumSTATSTG::Release", x_Release }, { "IEnumSTATSTG::Next", en_Next },
++        { "IEnumSTATSTG::Skip", en_Skip }, { "IEnumSTATSTG::Reset", en_Reset },
++        { "IEnumSTATSTG::Clone", en_Clone }, { 0, 0 } };
+     g_vt_stm = hle_com_vtable(stm);
+     g_vt_stg = hle_com_vtable(stg);
++    g_vt_enum = hle_com_vtable(en);
++
+     (void)x_notimpl_2, (void)x_notimpl_4;
+ }
+ 
+diff --git a/runtime/win32hle/storage_selftest.c b/runtime/win32hle/storage_selftest.c
+index 90bce03..b5b848e 100644
+--- a/runtime/win32hle/storage_selftest.c
++++ b/runtime/win32hle/storage_selftest.c
+@@ -36,6 +36,8 @@ int main(void) {
+         uint8_t bigdata[10000], back[10000];
+         char hello[18];
+         uint32_t stg, s2, stm, n;
++        uint32_t en, en2, fetched;
++        uint8_t st[3 * 72];                           /* STATSTG[3] */
+     } *g = hle_alloc(sizeof *g);
+     wide(g->file, "Z:\\tmp\\win32hle_storage.sav");
+     wide(g->sub, "Scenario"), wide(g->small, "Header"), wide(g->big, "Data");
+@@ -73,6 +75,32 @@ int main(void) {
+     ok("OpenStream big", vcall(g->s2, 4, 5, r2) == 0 && g->stm);
+     vcall(g->stm, 3, 3, rd);
+     ok("big read back", g->n == sizeof g->bigdata && !memcmp(g->back, g->bigdata, sizeof g->bigdata));
++
++    /* EnumElements over the sub-storage: both streams, in the compound file's
++     * order (shorter name first), then Next past the end, Reset, Skip, Clone. */
++    uint32_t ee[4] = { 0, 0, 0, P(&g->en) };
++    ok("EnumElements", vcall(g->s2, 11, 4, ee) == 0 && g->en);
++    uint32_t nx[3] = { 3, P(g->st), P(&g->fetched) };
++    uint32_t hr = vcall(g->en, 3, 3, nx);
++    const uint16_t *n0 = hle_ptr(*(uint32_t *)g->st), *n1 = hle_ptr(*(uint32_t *)(g->st + 72));
++    ok("Next: both, S_FALSE for the third", hr == 1 && g->fetched == 2);
++    ok("Next: Data then Header", n0 && n1 && n0[0] == 'D' && n0[4] == 0 && n1[0] == 'H' && n1[6] == 0);
++    ok("Next: stream type and size", *(uint32_t *)(g->st + 4) == 2 && *(uint32_t *)(g->st + 8) == sizeof g->bigdata &&
++       *(uint32_t *)(g->st + 72 + 8) == sizeof g->hello);
++    uint32_t one[3] = { 1, P(g->st), P(&g->fetched) };
++    ok("Next at the end: none", vcall(g->en, 3, 3, one) == 1 && g->fetched == 0);
++    ok("Reset", vcall(g->en, 5, 0, NULL) == 0);
++    uint32_t sk[1] = { 1 };
++    ok("Skip one", vcall(g->en, 4, 1, sk) == 0);
++    n0 = NULL;
++    ok("Next after Skip: Header", vcall(g->en, 3, 3, one) == 0 && g->fetched == 1 &&
++       (n0 = hle_ptr(*(uint32_t *)g->st)) && n0[0] == 'H');
++    uint32_t cl[1] = { P(&g->en2) };
++    ok("Clone at the end: nothing left", vcall(g->en, 6, 1, cl) == 0 && g->en2 &&
++       vcall(g->en2, 3, 3, one) == 1 && g->fetched == 0);
++    vcall(g->en2, 2, 0, NULL);
++    vcall(g->en, 2, 0, NULL);
++
+     vcall(g->stm, 2, 0, NULL);
+     vcall(g->s2, 2, 0, NULL);
+     vcall(g->stg, 2, 0, NULL);
+-- 
+2.55.0
+

@@ -1,0 +1,14 @@
+# Extra function entries for the catalog: "0xVA  # why". run_lift.py catalog reads them.
+
+# CRT memmove (0x61C980), backward copy: `jmp [ecx*4 + 0x61CC10]` with ecx
+# negative (-7..-1) indexes a table that ENDS at 0x61CC10 (0x61CBF4..0x61CC0C).
+# disasm32 reads jump tables forward only, so these were never labels; the run
+# died on "ITAIL: unresolved VA 0x0061CC44 from 0x0061C980". (pcrecomp
+# follow-up: negative-index tables, then these go.)
+0x0061CC14  # memmove UnwindDown
+0x0061CC1C
+0x0061CC24
+0x0061CC2C
+0x0061CC34
+0x0061CC3C
+0x0061CC44

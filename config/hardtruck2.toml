@@ -1,0 +1,54 @@
+# Hard Truck 2: King of the Road -- recompilation config.
+#
+# Read by scripts/run_lift.py and scripts/recon.sh. Paths are relative to the
+# repo root unless absolute. `game/` is a symlink to the install
+# (see AGENTS.md, "Layout"); nothing under it is ever committed.
+
+[game]
+name        = "Hard Truck 2: King of the Road"
+exe         = "game/king.exe"
+# GOG build. A different king.exe needs its own config: every address in
+# config/*.txt and every hook is tied to these exact bytes.
+sha256      = "4412a5f695dd016c9f92185b7d2d0be8ad3be787bfe2d77908f5b4d171eedd86"
+size        = 2908160
+image_base  = 0x00400000
+entry       = 0x0061F57A
+compiler    = "MSVC 6.0 (linker 6.00), static CRT + MFC 4.2, built 2002-03-19"
+
+[pcrecomp]
+# Sibling checkout. Override with $PCRECOMP.
+path        = "../pcrecomp"
+# The commit this project was last lifted against (scripts/run_lift.py
+# writes the live one into work/lift_stats.json). Project patches on top of it
+# live in patches/pcrecomp/ and are applied with scripts/pcrecomp_patches.sh.
+base_commit = "944e296"
+
+[catalog]
+# Function discovery: pcrecomp disasm32 recursive descent, seeded with the
+# entry point plus every file below that exists (scripts/recon.sh writes them).
+seed_files  = [
+    "work/rtti_seeds.json",     # tools/cpp/rtti.py: MSVC RTTI virtual methods
+    "work/vtable_seeds.json",   # tools/cpp/vtable_scan.py: vtables without RTTI
+    "work/ghidra_seeds.json",   # scripts/ghidra_ref.py: Ghidra's function starts
+]
+# Hand-found entries (callbacks only reached through a computed pointer, ...).
+# "0xADDR # why" -- one per line.
+extra_seeds = "config/seeds.txt"
+out         = "work/catalog.json"
+
+[lift]
+model         = "lift32"        # global-register model, runtime/recomp32
+out_dir       = "gen"           # generated C, gitignored
+split         = 400             # functions per recomp_NNNN.c
+precise_carry = true            # adc/sbb read the lazy carry (see lift32.py)
+names         = "work/names.json"   # VA -> name comments (RTTI, Ghidra, ...)
+overrides     = "config/overrides.txt"  # VA -> hand-written replacement
+exclude       = "config/exclude.txt"    # VA -> "not code", lifted as an abort
+
+[host]
+# Linux, gcc -m32, flat guest memory (guest VA == host VA).
+runtime    = "win32hle"
+# win32hle stops at DirectDraw 2 / DirectSound 1. king.exe needs IDirectDraw7 +
+# IDirect3D7 (DirectDrawCreateEx); that comes from LongRoad2's GLES backend,
+# ported onto the win32hle shim ABI in src/shims/ (see docs/HOST.md).
+longroad2  = "../LongRoad2"

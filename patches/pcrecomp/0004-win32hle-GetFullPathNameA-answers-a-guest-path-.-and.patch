@@ -1,0 +1,139 @@
+From 131205020ebbd56fc1f2d35892c3d2cdeb8059fd Mon Sep 17 00:00:00 2001
+From: Andrew R." <andrew612.ru@gmail.com>
+Date: Sat, 24 Oct 2026 21:31:49 +0300
+Subject: [PATCH 4/5] win32hle: GetFullPathNameA answers a guest path, . and ..
+ resolved
+
+It joined a relative name to the host's getcwd() and handed that back
+("/home/.../game/.\\.\ENV\*.way"); the guest passed it back in, a
+leading '/' reads as the root of C:, and the path named nothing. Hard
+Truck 2 found none of its AI road graphs that way ("No nodes were
+defined") and stopped.
+
+Now the path is the guest's, as Windows builds it: relative names on the
+current directory as GetCurrentDirectoryA reports it, rooted ones on the
+current drive, '.', '..' and repeated separators resolved, '\\'
+separators, a directory's trailing '\\' kept with no file part, and the
+size needed when the buffer is too small.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ runtime/win32hle/kernel32_ext.c          | 68 +++++++++++++++++++-----
+ runtime/win32hle/kernel32_ext_selftest.c | 18 +++++++
+ 2 files changed, 72 insertions(+), 14 deletions(-)
+
+diff --git a/runtime/win32hle/kernel32_ext.c b/runtime/win32hle/kernel32_ext.c
+index 1184c4a..a259430 100644
+--- a/runtime/win32hle/kernel32_ext.c
++++ b/runtime/win32hle/kernel32_ext.c
+@@ -785,22 +785,62 @@ static void k__llseek(void) {                            /* (hf, off, origin) */
+     RET(p < 0 ? INVALID_HANDLE : (uint32_t)p, 3);
+ }
+ 
+-/* GetFullPathNameA(name, buflen, buf, &filePart): a lexical absolute path (no
+- * disk access). Relative names are taken against the current directory; the
+- * result keeps whatever separators it had, which hle_path matches on either. */
++/* GetFullPathNameA(name, buflen, buf, &filePart): the absolute GUEST path, as
++ * Windows makes it, lexically (no disk access): a relative name is taken
++ * against the current directory (as GetCurrentDirectoryA reports it, a drive
++ * path), a rooted one against the current drive, and "." / ".." / repeated
++ * separators are resolved; separators come back as '\'. Too small a buffer:
++ * the size needed, NUL included. (It used to hand back the host's getcwd()
++ * joined to the name -- "/home/.../game/.\ENV\*.way" -- which the guest then
++ * passed back in, and which no longer named anything.) */
+ static void k_GetFullPathNameA(void) {
+-    const char *name = ASTR(0);
+-    char abs[1024];
+-    if (name && (name[0] == '/' || name[0] == '\\' || (name[0] && name[1] == ':')))
+-        snprintf(abs, sizeof abs, "%s", name);
+-    else { char cwd[768]; if (!getcwd(cwd, sizeof cwd)) cwd[0] = 0; snprintf(abs, sizeof abs, "%s/%s", cwd, name ? name : ""); }
+-    char *buf = ASTR(2); uint32_t n = A32(1);
+-    if (buf && n) { strncpy(buf, abs, n - 1); buf[n - 1] = 0; }
+-    if (A32(3) && buf) {
+-        char *bs = strrchr(buf, '\\'), *fs = strrchr(buf, '/'), *p = bs > fs ? bs : fs;
+-        MEM32(A32(3)) = hle_va(p ? p + 1 : buf);
++    const char *name = ASTR(0) ? ASTR(0) : "";
++    char base[1024], joined[2048], out[1024];
++    char cwd[1024];
++    if (!getcwd(cwd, sizeof cwd)) snprintf(cwd, sizeof cwd, ".");
++    hle_guest_path(cwd, base, sizeof base);                      /* "C:\Game" */
++    if (((name[0] | 0x20) >= 'a' && (name[0] | 0x20) <= 'z') && name[1] == ':')
++        snprintf(joined, sizeof joined, "%s", name);             /* X:\... (X:rel taken as X:\rel) */
++    else if (name[0] == '\\' || name[0] == '/')
++        snprintf(joined, sizeof joined, "%.2s%s", base, name);   /* the current drive's root */
++    else
++        snprintf(joined, sizeof joined, "%s\\%s", base, name);
++    /* resolve: "X:" then components, dropping "." and empty, ".." popping one */
++    size_t k = 0;
++    out[k++] = joined[0], out[k++] = ':';
++    const char *p = joined + 2;
++    size_t mark[256];
++    int depth = 0;
++    while (*p) {
++        while (*p == '\\' || *p == '/') p++;
++        const char *e = p;
++        while (*e && *e != '\\' && *e != '/') e++;
++        size_t len = (size_t)(e - p);
++        if (len == 0) break;
++        if (len == 1 && p[0] == '.') { p = e; continue; }
++        if (len == 2 && p[0] == '.' && p[1] == '.') {
++            if (depth > 0) k = mark[--depth];
++            p = e;
++            continue;
++        }
++        if (depth < 256) mark[depth++] = k;
++        if (k + 1 + len + 1 >= sizeof out) break;
++        out[k++] = '\\';
++        memcpy(out + k, p, len), k += len;
++        p = e;
++    }
++    if (k == 2 || (*name && (name[strlen(name) - 1] == '\\' || name[strlen(name) - 1] == '/')))
++        out[k++] = '\\';                                         /* "C:\" and a trailing separator stay */
++    out[k] = 0;
++    char *buf = ASTR(2);
++    uint32_t n = A32(1);
++    if (!buf || n < k + 1) RET((uint32_t)k + 1, 4);
++    memcpy(buf, out, k + 1);
++    if (A32(3)) {
++        char *last = strrchr(buf, '\\');
++        MEM32(A32(3)) = last && last[1] ? hle_va(last + 1) : 0;  /* none for a directory ending in '\' */
+     }
+-    RET(buf ? (uint32_t)strlen(buf) : (uint32_t)strlen(abs), 4);
++    RET((uint32_t)k, 4);
+ }
+ 
+ /* ---- file mappings ----
+diff --git a/runtime/win32hle/kernel32_ext_selftest.c b/runtime/win32hle/kernel32_ext_selftest.c
+index 6a97d03..ee188ef 100644
+--- a/runtime/win32hle/kernel32_ext_selftest.c
++++ b/runtime/win32hle/kernel32_ext_selftest.c
+@@ -148,8 +148,26 @@ int main(void) {
+         ok("overlay: a name relative to the game's folder", hle_host_path("rules.ini", p, sizeof p) && strcasestr(p, "/mod/RULES.INI"));
+         hle_set_overlay(NULL, NULL);
+         ok("overlay off: the game's file again", hle_host_path("C:\\rules.ini", p, sizeof p) && strstr(p, "/game/rules.ini"));
++
++        /* GetFullPathNameA: guest paths, never the host's, with . and ..
++         * resolved (Hard Truck 2 builds ".\\.\ENV\*.way" through it). */
++        hle_set_drive('C', "/tmp/hleov");                 /* the cwd, /tmp/hleov/game, is C:\game */
++        uint32_t V_Full = hle_resolve("GetFullPathNameA"), fb = hle_va(hle_alloc(260)), fp = hle_va(hle_alloc(4));
++        const char *fbs = hle_ptr(fb);
++#define FULL(name, size) hle_call_guest(V_Full, 4, (uint32_t[]){ hle_guest_strdup(name), size, fb, fp })
++        ok("full path: relative, . and empty components", FULL(".\\\\.\\ENV\\*.way", 260) == 17 &&
++           !strcmp(fbs, "C:\\game\\ENV\\*.way") && !strcmp(hle_ptr(MEM32(fp)), "*.way"));
++        ok("full path: ..", FULL("a\\..\\b.txt", 260) == 13 && !strcmp(fbs, "C:\\game\\b.txt"));
++        ok("full path: rooted, on the current drive", FULL("\\x/y", 260) == 6 && !strcmp(fbs, "C:\\x\\y"));
++        ok("full path: another drive", FULL("D:\\x\\.\\y\\..\\z", 260) == 6 && !strcmp(fbs, "D:\\x\\z"));
++        ok("full path: .. stops at the root", FULL("..\\..\\..", 260) == 3 && !strcmp(fbs, "C:\\"));
++        ok("full path: a directory keeps its '\\', no file part", FULL("dir\\", 260) == 12 &&
++           !strcmp(fbs, "C:\\game\\dir\\") && MEM32(fp) == 0);
++        ok("full path: too small a buffer says how much", FULL("b.txt", 4) == 14);
++#undef FULL
+     }
+ 
++
+     /* .ini as Windows reads it: CRLF lines, blanks around '=' (Hard Truck 2's
+      * kmjin.ini: "type = 0x10204"), comments and quotes, the section and key
+      * lists a NULL section / key asks for, truncation, the Int variant's hex,
+-- 
+2.55.0
+

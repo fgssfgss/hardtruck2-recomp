@@ -1,0 +1,71 @@
+From da9692ef3e46dcdc9381be3ee9d29f1a2c67a2fc Mon Sep 17 00:00:00 2001
+From: "Andrew R." <andrew612.ru@gmail.com>
+Date: Sat, 24 Oct 2026 20:44:14 +0300
+Subject: [PATCH 1/5] win32hle: export the SDL key mapping (hle_sdl_vk,
+ hle_sdl_scan)
+
+A host that runs its own SDL window -- a GLES DirectDraw/Direct3D 7
+backend in place of screen.c's -- still feeds input through
+hle_input_key, and needs the same scancode -> virtual key and set-1 scan
+code tables screen.c uses, rather than a second copy of them.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ runtime/win32hle/screen.c   | 10 ++++++----
+ runtime/win32hle/win32hle.h |  5 +++++
+ 2 files changed, 11 insertions(+), 4 deletions(-)
+
+diff --git a/runtime/win32hle/screen.c b/runtime/win32hle/screen.c
+index 55b7ec2..68e6288 100644
+--- a/runtime/win32hle/screen.c
++++ b/runtime/win32hle/screen.c
+@@ -85,7 +85,8 @@ int (*hle_screen_compose_hook)(const uint8_t *px16, int pitch, int w, int h, uin
+ static uint32_t *g_hd;
+ static size_t g_hd_n;
+ 
+-static int vk_of(SDL_Scancode s) {
++int hle_sdl_vk(int sdl_scancode) {
++    SDL_Scancode s = (SDL_Scancode)sdl_scancode;
+     if (s >= SDL_SCANCODE_A && s <= SDL_SCANCODE_Z) return 'A' + (s - SDL_SCANCODE_A);
+     if (s >= SDL_SCANCODE_1 && s <= SDL_SCANCODE_9) return '1' + (s - SDL_SCANCODE_1);
+     if (s >= SDL_SCANCODE_F1 && s <= SDL_SCANCODE_F12) return 0x70 + (s - SDL_SCANCODE_F1);
+@@ -133,7 +134,8 @@ static int vk_of(SDL_Scancode s) {
+     }
+ }
+ /* the PC/AT set-1 scan code, which lParam carries */
+-static uint32_t scan_of(SDL_Scancode s) {
++uint32_t hle_sdl_scan(int sdl_scancode) {
++    SDL_Scancode s = (SDL_Scancode)sdl_scancode;
+     static const uint8_t t[SDL_NUM_SCANCODES] = {
+         [SDL_SCANCODE_ESCAPE] = 0x01, [SDL_SCANCODE_1] = 2, [SDL_SCANCODE_2] = 3, [SDL_SCANCODE_3] = 4, [SDL_SCANCODE_4] = 5,
+         [SDL_SCANCODE_5] = 6, [SDL_SCANCODE_6] = 7, [SDL_SCANCODE_7] = 8, [SDL_SCANCODE_8] = 9, [SDL_SCANCODE_9] = 10,
+@@ -547,8 +549,8 @@ void hle_screen_pump(void) {
+                 }
+                 break;
+             }
+-            int vk = vk_of(e.key.keysym.scancode);
+-            if (vk) hle_input_key(e.type == SDL_KEYDOWN, (uint32_t)vk, scan_of(e.key.keysym.scancode));
++            int vk = hle_sdl_vk(e.key.keysym.scancode);
++            if (vk) hle_input_key(e.type == SDL_KEYDOWN, (uint32_t)vk, hle_sdl_scan(e.key.keysym.scancode));
+             break;
+         }
+         case SDL_MOUSEMOTION: {
+diff --git a/runtime/win32hle/win32hle.h b/runtime/win32hle/win32hle.h
+index 08e5fd0..28ad9c2 100644
+--- a/runtime/win32hle/win32hle.h
++++ b/runtime/win32hle/win32hle.h
+@@ -300,6 +300,11 @@ extern const win32hle_shim win32hle_bink[];           /* binkw32 on ffmpeg (bink
+ /* The SDL2 display and input for a DirectDraw game (screen.c): installs
+  * itself as the pump hook. headless: no window (a script drives input). */
+ int  hle_screen_open(const char *title, int fullscreen, int headless);
++/* SDL scancode -> Windows virtual key (0: none) and PC/AT set-1 scan code,
++ * for a host that runs its own SDL window and feeds hle_input_key itself. */
++int      hle_sdl_vk(int sdl_scancode);
++uint32_t hle_sdl_scan(int sdl_scancode);
++
+ void hle_screen_pump(void);
+ extern int (*hle_screen_key_hook)(int sdl_scancode, int down);   /* nonzero: the host took the key */
+ void hle_screen_title(const char *title);
+-- 
+2.55.0
+

@@ -1,0 +1,16 @@
+# Game material and everything derived from it -- never commit (AGENTS.md).
+/game
+/work/
+/gen/
+*.exe
+*.dll
+*.avi
+*.RES
+*.res
+
+# Build + tooling
+/build*/
+/.venv/
+__pycache__/
+*.pyc
+compile_commands.json
