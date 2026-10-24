@@ -40,10 +40,32 @@ pointer and a host pointer does not fit in a DWORD.
 - Every Release that frees an object calls `gfx_native_freed()`, so the
   bridge drops the guest proxies of that object.
 
-**Fixes found on the way** (`ddraw.c`)
+**Fixes found on the way** (also wrong in LongRoad2, worth sending upstream)
 
 - `Lock` with a rect returns a pointer to that rect's first pixel. LongRoad2
-  always returned the surface base.
+  always returned the surface base (`ddraw.c`).
+- **The race blinked black every other frame** (`gl_state_cache.c`,
+  `render.c`). `gl_target_destroy` deleted a texture without telling the GL
+  state cache. GL had silently unbound it, but the cache still recorded it
+  as bound under that name. `glGenTextures` handed the same name out again
+  to one of the two flip buffers, so its bind was skipped as "already
+  bound", its `glTexImage2D` went to texture 0, and the buffer was sampled
+  as an empty texture: black. `gl_state_forget_texture()` now drops the
+  name's bindings, its cached parameters and its NPOT flag before every
+  `glDeleteTextures`. Whether a run hit it depended on which texture
+  happened to be bound when the menu ended, so it came and went between runs.
+- `gl_state_bind_texture_2d` returned early on a cached binding without
+  making the unit active, so a following `glTexImage2D`/`glTexParameteri`
+  could act on another unit's texture. The active unit is now tracked
+  (`set_active_unit`), and `gl_state_set_tex_parameters` makes sure its
+  texture is bound on the active unit first.
+
+Diagnostics added for this, all off by default: `HT2_PRESENT_TRACE=1` (each
+present: path, brightness, bound texture and its level-0 size/format; GL
+object create/attach/destroy as `[gl]` lines) and `HT2_PRESENT_RESET=1`
+(forget the whole cache before each present: a blink that this cures is a
+cache bug).
+
 
 **GLES 2.0** (`render.c`, `gl_state_cache.c/.h`, all `#include <GLES3/gl3.h>` → `GLES2/gl2.h`)
 

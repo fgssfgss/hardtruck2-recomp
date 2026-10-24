@@ -49,6 +49,13 @@ And after it:
    IMediaControl, IMediaEventEx and IBasicAudio. RenderFile decodes
    `MUSIC\trackNNl.mp3` with mpg123 into win32hle's host audio stream, and
    EC_COMPLETE comes once the track has played out, so the playlist moves on.
+10. Black every other frame in the race: GL texture names get reused, and
+    the renderer's GL state cache kept believing things about the deleted
+    texture. A menu texture was deleted at the switch to the race, its name
+    came back for one flip buffer, that buffer's bind was skipped as
+    "already bound", and it never got storage. Fixed in src/gfx (see its
+    README). Found headless with `SDL_VIDEODRIVER=offscreen` and
+    `HT2_PRESENT_TRACE=1`.
 
 ## Numbers
 
@@ -82,4 +89,4 @@ except the 4 MSVFW32 `IC*` calls (`scripts/import_coverage.py --missing`).
 - The game writes `warn.log` / `aimsg.log` into the install, as on Windows.
 - Here, SDL's X11 backend hangs creating a window (an XWayland issue, outside
   this code); run with `SDL_VIDEODRIVER=wayland` on a Wayland desktop.
-- OPEN: black every other frame in the race. With HT2_PRESENT_RESET=1 (GL state cache reset per present) one run showed 9/2016 black frames; making that the default showed 276/637 black and the run aborted (work/blink5.log). Not understood yet. HT2_PRESENT_TRACE=1 logs each present's brightness; HT2_CMDBUF_SYNC=1 (synchronous D3D7 replay) did not help.
+- One run (work/blink5.log, with HT2_PRESENT_RESET defaulting on) died of SIGABRT with no message; not reproduced in 6 runs since. Watch for it.

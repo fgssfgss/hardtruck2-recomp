@@ -1271,12 +1271,8 @@ void cmdbuf_flush(d3d_device7_t *dev)
        start immediately into the slot just flipped to, with no separate
        "wait for my slot" call needed here. */
     gl_thread_post(cmdbuf_flush_job_run, job);
-    /* HT2_CMDBUF_SYNC=1 (hardtruck2-recomp diagnostic): wait for this
-       scene's replay right here, i.e. no Phase 2 pipelining. */
-    static int sync = -1;
-    if (sync < 0) sync = env_flag_enabled("HT2_CMDBUF_SYNC");
-    if (sync) gl_thread_wait_idle();
 }
+
 
 
 /* Drops every recorded command WITHOUT replaying it -- defensive teardown

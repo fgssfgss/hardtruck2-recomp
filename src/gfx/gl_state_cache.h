@@ -86,7 +86,9 @@ void gl_state_set_dither_enabled(int enabled); /* glEnable/glDisable(GL_DITHER) 
    clamps. render.c reports each texture's size and whether NPOT wrapping
    works; gl_state_set_tex_parameters below then quietly clamps such a
    texture instead of setting GL_REPEAT on it. */
+void gl_state_forget_texture(GLuint texture);   /* before glDeleteTextures: drop its cached bindings/params */
 void gl_state_set_npot_repeat_ok(int ok);
+
 void gl_state_note_tex_size(GLuint texture, int w, int h);
 void gl_state_set_tex_parameters(GLuint texture, GLint wrap_s, GLint wrap_t,
 

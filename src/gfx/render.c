@@ -760,14 +760,13 @@ static void gl_reset_defensive_toggles(void)
 
 static void present_reset_state_and_clear(int *out_win_w, int *out_win_h)
 {
-    /* hardtruck2-recomp: forget every cached GL state first. Without this,
-       about every other in-race present drew black (measured with
-       HT2_PRESENT_TRACE: 963 of 2069; with the reset: 9, at mode switches).
-       Something leaves GL state the cache no longer matches; no raw GL
-       state call outside gl_state_cache.c was found, so the culprit is
-       still open. HT2_PRESENT_RESET=0 turns this off to chase it. */
+    /* HT2_PRESENT_RESET=1 (hardtruck2-recomp diagnostic): forget every
+       cached GL state before each present -- how the stale active-texture-
+       unit bug (gl_state_bind_texture_2d) was found; a blink that this
+       makes go away is a GL state cache bug. */
     static int reset = -1;
-    if (reset < 0) reset = !(getenv("HT2_PRESENT_RESET") && !strcmp(getenv("HT2_PRESENT_RESET"), "0"));
+    if (reset < 0) reset = getenv("HT2_PRESENT_RESET") != NULL && strcmp(getenv("HT2_PRESENT_RESET"), "0");
+
 
     if (reset) { gl_state_reset(); g_current_fbo = (GLuint)-1; }
 
@@ -822,6 +821,7 @@ static void present_reset_state_and_clear(int *out_win_w, int *out_win_h)
  * frame -- which present path drew it, how bright it is (a 4x4 grid of
  * pixels read back before the swap), and the ms since the previous present.
  * Finds which path hands the window a black frame. */
+GL_APICALL void GL_APIENTRY glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint *params);   /* ES 3.1 */
 static void present_trace(const char *kind, int win_w, int win_h)
 {
     static int on = -1;
@@ -837,7 +837,40 @@ static void present_trace(const char *kind, int win_w, int win_h)
             sum += (unsigned)px[0] + px[1] + px[2];
         }
     uint32_t now = SDL_GetTicks();
-    fprintf(stderr, "[present] %ld %s mean=%u dt=%u\n", n++, kind, sum / 48, now - last);
+    GLint act = 0, bound = 0, prog = 0, minf = 0, magf = 0, ws = 0, fbo = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &act);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+    glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &minf);
+    glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &magf);
+    glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, &ws);
+    GLboolean cm[4] = { 0 };
+    GLint bsrc = 0, bdst = 0;
+    glGetBooleanv(GL_COLOR_WRITEMASK, cm);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &bsrc);
+    glGetIntegerv(GL_BLEND_DST_RGB, &bdst);
+    GLint lw = -1, lh = -1, lfmt = -1, base = -1, maxl = -1, swr = -1, swa = -1, cmp = -1, immut = -1;
+    if (g_gles_major >= 3) {
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, 0x1000, &lw);       /* GL_TEXTURE_WIDTH */
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, 0x1001, &lh);       /* GL_TEXTURE_HEIGHT */
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, 0x1003, &lfmt);     /* GL_TEXTURE_INTERNAL_FORMAT */
+        glGetTexParameteriv(GL_TEXTURE_2D, 0x813C, &base);             /* GL_TEXTURE_BASE_LEVEL */
+        glGetTexParameteriv(GL_TEXTURE_2D, 0x813D, &maxl);             /* GL_TEXTURE_MAX_LEVEL */
+        glGetTexParameteriv(GL_TEXTURE_2D, 0x8E42, &swr);              /* GL_TEXTURE_SWIZZLE_R */
+        glGetTexParameteriv(GL_TEXTURE_2D, 0x8E45, &swa);              /* GL_TEXTURE_SWIZZLE_A */
+        glGetTexParameteriv(GL_TEXTURE_2D, 0x884C, &cmp);              /* GL_TEXTURE_COMPARE_MODE */
+        glGetTexParameteriv(GL_TEXTURE_2D, 0x912F, &immut);            /* GL_TEXTURE_IMMUTABLE_FORMAT */
+    }
+    GLint err = (GLint)glGetError();
+    fprintf(stderr, "[present] %ld %s mean=%u dt=%u | tex%d %dx%d fmt=0x%x base=%d max=%d swz=%x/%x cmp=%d imm=%d"
+                    " min=0x%x mag=0x%x prog%d(%u) blend=%d err=0x%x\n",
+            n++, kind, sum / 48, now - last, bound, lw, lh, lfmt, base, maxl, swr, swa, cmp, immut,
+            minf, magf, prog, g_present_prog, glIsEnabled(GL_BLEND), err);
+    (void)act; (void)fbo; (void)ws; (void)cm; (void)bsrc; (void)bdst;
+
+
+
     last = now;
 }
 
@@ -976,7 +1009,8 @@ static void render_present_gl_target_impl(gl_target_t *t)
         }
     }
 
-    present_trace("gl_target", win_w, win_h);
+    { char k[32]; snprintf(k, sizeof k, "gl_target(tex%u)", t->tex); present_trace(k, win_w, win_h); }
+
     present_dump_frame_if_enabled(win_w, win_h);
     frame_pace_wait();
     SDL_GL_SwapWindow(g_window);
@@ -1060,8 +1094,10 @@ int render_should_quit(void)
 
 /* --- gl_target_t: FBO/texture resource management, see render.h --- */
 
+static int gl_life_trace(void) { static int on = -1; if (on < 0) on = getenv("HT2_PRESENT_TRACE") != NULL; return on; }
 static void gl_target_ensure_impl(gl_target_t *t, int w, int h, int as_render_target)
 {
+
     if (t == NULL || w <= 0 || h <= 0) return;
     if (t->tex != 0 && t->w == w && t->h == h && !t->native565 && (!as_render_target || t->fbo != 0)) return;
 
@@ -1120,7 +1156,9 @@ static void gl_target_ensure_impl(gl_target_t *t, int w, int h, int as_render_ta
         if (g_has_packed_depth_stencil)
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, t->depth_rb);
 
+        if (gl_life_trace()) fprintf(stderr, "[gl] attach %p tex%u -> fbo%u rb%u %dx%d\n", (void *)t, t->tex, t->fbo, t->depth_rb, w, h);
         GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+
         if (status != GL_FRAMEBUFFER_COMPLETE) {
             /* status==0 is NOT a real GL_FRAMEBUFFER_* value (those all
                start at 0x8CD5+) -- seen live on a real device, alongside
@@ -1479,7 +1517,13 @@ static int gl_target_clear_rect_impl(gl_target_t *dst, int dst_x, int dst_y, int
 static void gl_target_destroy_impl(gl_target_t *t)
 {
     if (t == NULL) return;
-    if (t->tex != 0) glDeleteTextures(1, &t->tex);
+    if (gl_life_trace()) fprintf(stderr, "[gl] destroy %p tex%u fbo%u rb%u\n", (void *)t, t->tex, t->fbo, t->depth_rb);
+
+    if (t->tex != 0) {
+        gl_state_forget_texture(t->tex);   /* its name will be handed out again: see gl_state_forget_texture */
+        glDeleteTextures(1, &t->tex);
+    }
+
     if (t->fbo != 0) {
         /* Deleting the currently-bound FBO makes GL itself silently
            revert the real binding to 0 (spec behavior) -- bind_fbo's

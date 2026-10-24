@@ -71,7 +71,22 @@ static struct {
 
     tex_param_entry_t tex_param[GL_STATE_TEX_PARAM_CACHE_SIZE];
     int tex_param_next_evict; /* round-robin index, used only when the cache is full AND the texture isn't already in it */
+
+    /* The active texture unit (glActiveTexture) is GL state of its own --
+       every glTexImage2D/glTexSubImage2D/glTexParameteri acts on the
+       texture bound on THIS unit -- so it is tracked, not inferred from
+       the last bind (hardtruck2-recomp; see gl_state_bind_texture_2d). */
+    GLenum active_unit;
+    int active_unit_valid;
 } g_state;
+
+static void set_active_unit(GLenum unit)
+{
+    if (g_state.active_unit_valid && g_state.active_unit == unit) return;
+    glActiveTexture(unit);
+    g_state.active_unit = unit;
+    g_state.active_unit_valid = 1;
+}
 
 /* Test-only, separate from g_state proper (which gl_state_reset() clears)
    -- counters must survive a gl_state_reset() so a test can reset+drive a
@@ -105,6 +120,7 @@ void gl_state_reset(void)
     for (int i = 0; i < GL_STATE_MAX_VERTEX_ATTRIBS; i++) g_state.vertex_attrib[i].valid = 0;
     for (int i = 0; i < GL_STATE_TEX_PARAM_CACHE_SIZE; i++) g_state.tex_param[i].valid = 0;
     g_state.tex_param_next_evict = 0;
+    g_state.active_unit_valid = 0;
 }
 
 void gl_state_use_program(GLuint program)
@@ -118,23 +134,52 @@ void gl_state_bind_texture_2d(GLenum unit, GLuint texture)
 {
     unsigned idx = (unsigned)(unit - GL_TEXTURE0);
     if (idx >= GL_STATE_MAX_TEX_UNITS) { /* out-of-range unit: always safe to just pass through uncached */
-        glActiveTexture(unit);
+        set_active_unit(unit);
         glBindTexture(GL_TEXTURE_2D, texture);
         return;
     }
+    /* hardtruck2-recomp: the unit is made active EVEN when the binding is
+       already cached. Callers follow this with glTexImage2D/glTexSubImage2D/
+       glTexParameteri, which act on the ACTIVE unit's texture; returning
+       early used to leave whatever unit the previous bind selected active
+       (unit 1 after a two-stage D3D7 draw), so gl_target_ensure's
+       glTexImage2D(..., NULL) reallocated -- emptied -- some other texture,
+       the other flip buffer among them: Hard Truck 2's in-race screen was
+       black every other frame. */
+    set_active_unit(unit);
     if (g_state.bound_tex_valid[idx] && g_state.bound_tex[idx] == texture) return;
-    glActiveTexture(unit);
     glBindTexture(GL_TEXTURE_2D, texture);
     g_state.bound_tex[idx] = texture;
     g_state.bound_tex_valid[idx] = 1;
 }
 
+/* A texture is about to be deleted (hardtruck2-recomp): forget every cached
+   fact about its NAME. glDeleteTextures silently unbinds it from every unit,
+   and glGenTextures hands the same name out again -- with the old entries
+   still cached, the new texture's bind was skipped as "already bound" (GL
+   had 0 bound), its glTexImage2D went to texture 0, and the new texture was
+   left with no storage, sampling black; its parameters could be skipped the
+   same way. Hard Truck 2's race reused the name of a menu surface's texture
+   for one of its two flip buffers: black every other frame. */
+static uint8_t *g_tex_npot;       /* by texture name: 1 = not a power of two (gl_state_note_tex_size) */
+static size_t g_tex_npot_n;
+void gl_state_forget_texture(GLuint texture)
+{
+
+    if (texture == 0) return;
+    gl_state_unbind_texture_everywhere(texture);
+    for (int i = 0; i < GL_STATE_TEX_PARAM_CACHE_SIZE; i++)
+        if (g_state.tex_param[i].valid && g_state.tex_param[i].texture == texture) g_state.tex_param[i].valid = 0;
+    if (texture < g_tex_npot_n) g_tex_npot[texture] = 0;
+}
+
 void gl_state_unbind_texture_everywhere(GLuint texture)
 {
+
     if (texture == 0) return;
     for (unsigned i = 0; i < GL_STATE_MAX_TEX_UNITS; i++) {
         if (g_state.bound_tex_valid[i] && g_state.bound_tex[i] == texture) {
-            glActiveTexture(GL_TEXTURE0 + i);
+            set_active_unit(GL_TEXTURE0 + i);
             glBindTexture(GL_TEXTURE_2D, 0);
             g_state.bound_tex[i] = 0;
         }
@@ -349,8 +394,6 @@ static long g_tex_param_calls;
 static long g_tex_param_skips;
 
 static int g_npot_repeat_ok = 1;
-static uint8_t *g_tex_npot;       /* by texture name: 1 = not a power of two */
-static size_t g_tex_npot_n;
 
 void gl_state_set_npot_repeat_ok(int ok) { g_npot_repeat_ok = ok; }
 
@@ -398,7 +441,21 @@ void gl_state_set_tex_parameters(GLuint texture, GLint wrap_s, GLint wrap_t,
         g_state.tex_param_next_evict = (g_state.tex_param_next_evict + 1) % GL_STATE_TEX_PARAM_CACHE_SIZE;
     }
 
+    /* glTexParameteri acts on the texture bound on the ACTIVE unit: make
+       sure that is `texture` (callers bind it first, but a stale active
+       unit -- see gl_state_bind_texture_2d -- set another texture's
+       parameters and cached them as this one's). */
+    {
+        unsigned au = g_state.active_unit_valid ? (unsigned)(g_state.active_unit - GL_TEXTURE0) : 0;
+        if (!g_state.active_unit_valid) set_active_unit(GL_TEXTURE0);
+        if (au < GL_STATE_MAX_TEX_UNITS && !(g_state.bound_tex_valid[au] && g_state.bound_tex[au] == texture)) {
+            glBindTexture(GL_TEXTURE_2D, texture);
+            g_state.bound_tex[au] = texture;
+            g_state.bound_tex_valid[au] = 1;
+        }
+    }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_s);
+
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_t);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);

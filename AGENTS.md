@@ -109,7 +109,11 @@ hangs in `SDL_CreateWindow` (XWayland never maps the window), so use
 | `HLE_FILETRACE=1`, `HLE_MSGTRACE=1`, `HLE_REGTRACE=1` | win32hle: file opens and lookups, messages, registry |
 | `LONGROAD2_DDRAW_TRACE=1`, `LONGROAD2_PERF_TRACE=1`, `LONGROAD2_NO_VSYNC`, `LONGROAD2_FPS_LIMIT` | LongRoad2's own switches, still in src/gfx |
 | `SDL_AUDIODRIVER=dummy` / `disk` (`SDL_DISKAUDIOFILE`) | no sound card / the mix to a file. **Silent on the speakers**: say so before using it on the user's desktop |
-| `SDL_VIDEODRIVER=dummy` | no window at all (the renderer fails to open, the game still runs): long unattended runs that should not appear on the desktop |
+| `SDL_VIDEODRIVER=offscreen` | a real GLES context with **no window**: renders, frame dumps and traces work, nothing appears on the user's desktop. Use it for rendering investigations (with `SDL_AUDIODRIVER=dummy` it is silent too) |
+| `SDL_VIDEODRIVER=dummy` | no window and no GL (the renderer fails to open; the game never reaches its menu) |
+| `HT2_PRESENT_TRACE=1` | per present: path, brightness, bound texture and its storage; `[gl]` texture/FBO lifecycle |
+| `HT2_PRESENT_RESET=1` | forget the GL state cache before each present (diagnostic) |
+
 | `HT2_NO_MUSIC=1` | quartz loads nothing |
 
 

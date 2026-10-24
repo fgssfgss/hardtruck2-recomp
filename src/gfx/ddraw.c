@@ -2084,6 +2084,7 @@ static void surface7_present(surface7_t *s)
     int did_gpu_present = 0;
     if (use_gpu_direct) {
         render_present_gl_target(&s->gl);
+
         did_gpu_present = 1;
         /* A real D3D7 GPU-rendered present unambiguously means this
            surface has shown real content -- see the all-zero-Lock/Unlock-
