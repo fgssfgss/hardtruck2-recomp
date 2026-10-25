@@ -95,7 +95,7 @@ static void *decoder(void *arg) {
         pthread_mutex_unlock(&g_mu);
         if (!want) { usleep(10000); continue; }
         size_t got = 0;
-        int err = mpg123_read(mh, pcm, sizeof pcm, &got);
+        int err = mpg123_read(mh, (void *)pcm, sizeof pcm, &got);
         pthread_mutex_lock(&g_mu);
         if (mh == g_mh) {                                /* not replaced meanwhile */
             if (got) hle_audio_stream_push(g_stream, pcm, (int)(got / (2u * (unsigned)g_channels)));

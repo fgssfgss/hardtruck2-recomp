@@ -19,7 +19,17 @@ set(PCRECOMP "${CMAKE_CURRENT_SOURCE_DIR}/../pcrecomp" CACHE PATH "pcrecomp chec
 option(HT2_FLAT32 "32-bit host, guest VA == host VA (gcc -m32)" OFF)
 # 64-bit: the guest's 4 GB is one mapping at this fixed host address, and the
 # lift's ADDR(va) adds it as a constant (win32hle README, "flat or based").
-set(HT2_MEM_BASE "0x100000000000ull" CACHE STRING "host address of guest VA 0 (64-bit)")
+# aarch64 handheld kernels are often built with 39-bit user addresses
+# (512 GB), where 0x100000000000 (16 TB) cannot be mapped at all; 256 GB sits
+# under that, and under where those kernels load a PIE (2/3 of the space).
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+  set(_ht2_base_default "0x4000000000ull")
+else()
+  set(_ht2_base_default "0x100000000000ull")
+endif()
+set(HT2_MEM_BASE "${_ht2_base_default}" CACHE STRING "host address of guest VA 0 (64-bit)")
+# Everything here was written for x86, where char is signed; on ARM it is not.
+add_compile_options(-fsigned-char)
 set(HT2_GEN_OPT "-O1" CACHE STRING "optimisation for the 3.7M lines of lifted C")
 
 set(RT32 "${PCRECOMP}/runtime/recomp32")

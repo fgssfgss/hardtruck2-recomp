@@ -1,0 +1,39 @@
+{
+  "version": 4,
+  "name": "hardtruck2.zip",
+  "items": [
+    "Hard Truck 2.sh",
+    "hardtruck2"
+  ],
+  "items_opt": [],
+  "attr": {
+    "title": "Hard Truck 2: King of the Road",
+    "porter": [
+      "Andrii R."
+    ],
+    "desc": "Trucking across a big open map: haul cargo, buy better trucks, race rivals and dodge the mafia and the police. A static recompilation of the PC game (king.exe) to native aarch64, drawing with OpenGL ES.",
+    "desc_md": null,
+    "inst": "Copy your own Hard Truck 2: King of the Road install (the GOG release) into ports/hardtruck2/gamedata, so that king.exe is in that folder.",
+    "inst_md": null,
+    "genres": [
+      "racing",
+      "simulation"
+    ],
+    "image": null,
+    "rtr": false,
+    "exp": true,
+    "runtime": [],
+    "store": [
+      {
+        "name": "GOG",
+        "gameurl": "https://www.gog.com/game/hard_truck_2_king_of_the_road"
+      }
+    ],
+    "availability": "paid",
+    "reqs": [],
+    "arch": [
+      "aarch64"
+    ],
+    "min_glibc": "2.31"
+  }
+}

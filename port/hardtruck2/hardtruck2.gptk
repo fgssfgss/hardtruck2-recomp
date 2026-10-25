@@ -1,0 +1,33 @@
+back = esc
+start = enter
+guide = esc
+
+up = home
+down = end
+left = delete
+right = pagedown
+
+a = mouse_left
+b = b
+x = space
+y = v
+
+l1 = z
+r1 = a
+l2 = tab
+r2 = h
+l3 = l
+r3 = w
+
+left_analog_up = up
+left_analog_down = down
+left_analog_left = left
+left_analog_right = right
+
+right_analog_up = mouse_movement_up
+right_analog_down = mouse_movement_down
+right_analog_left = mouse_movement_left
+right_analog_right = mouse_movement_right
+
+mouse_scale = 512
+deadzone_mode = axial

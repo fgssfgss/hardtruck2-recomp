@@ -3,11 +3,13 @@
  *
  *   ht2 [--game DIR] [-- game args...]
  *
- * DIR is the install (default: $HT2_GAME, else ./game). It becomes C:\HardTruck2
- * and the current directory, which is what the GOG install looks like to the
- * game. The boot is permissive: an import nothing answers yet binds to a stub
- * that stops the run naming itself (win32hle README, "What a title still
- * brings") -- implement it in src/shims/, rerun, get the next one.
+ * DIR is the install (default: $HT2_GAME, else ./game). C: is its parent, so
+ * the install is C:\<its name> (C:\HardTruck2 for the GOG install, and
+ * C:\gamedata in the PortMaster port), and it is the current directory.
+ *
+ * The boot is permissive: an import nothing answers yet binds to a stub that
+ * stops the run naming itself (win32hle README, "What a title still brings")
+ * -- implement it in src/shims/, rerun, get the next one.
  */
 #define _GNU_SOURCE
 #include <limits.h>
@@ -39,7 +41,7 @@ int main(int argc, char **argv) {
     char exe[PATH_MAX + 16];
     snprintf(exe, sizeof exe, "%s/king.exe", root);
 
-    /* C:\ is the parent of the install, so the install is C:\HardTruck2. */
+    /* C:\ is the parent of the install, so the install is C:\<its name>. */
     char parent[PATH_MAX];
     snprintf(parent, sizeof parent, "%s", root);
     char *slash = strrchr(parent, '/');
@@ -47,7 +49,7 @@ int main(int argc, char **argv) {
     hle_set_drive('C', parent);
 
     char cmdline[1024];
-    int n = snprintf(cmdline, sizeof cmdline, "\"C:\\HardTruck2\\king.exe\"");
+    int n = snprintf(cmdline, sizeof cmdline, "\"C:\\%s\\king.exe\"", strrchr(root, '/') + 1);
     for (; i < argc && n < (int)sizeof cmdline; i++)
         n += snprintf(cmdline + n, sizeof cmdline - n, " %s", argv[i]);
     hle_set_command_line(cmdline);

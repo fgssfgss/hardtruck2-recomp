@@ -1,0 +1,18 @@
+# The aarch64 build environment for PortMaster / AmberELEC: PortMaster's own
+# builder image (Ubuntu 20.04, glibc 2.31, gcc 9, SDL2 2.32 + SDL2_ttf, GLES
+# and EGL headers), plus the one library ht2 needs that the image lacks.
+#
+# glibc 2.31 is the point: a binary built here runs on every CFW PortMaster
+# supports (AmberELEC, ArkOS, ROCKNIX, muOS, Knulli...), whose glibc is that
+# old or newer. A binary built on this desktop's glibc would not.
+#
+# libmpg123 (the music, src/shims/quartz.c) is not on every CFW, so the port
+# ships Ubuntu's libmpg123.so.0 next to the binary (scripts/package_port.sh).
+#
+# Built by docker/build_aarch64.sh; on an x86 host it runs under qemu-user
+# (docker run --rm --privileged multiarch/qemu-user-static --reset -p yes).
+FROM ghcr.io/monkeyx-net/portmaster-build-templates/portmaster-builder:aarch64-latest
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libmpg123-dev && \
+    rm -rf /var/lib/apt/lists/*

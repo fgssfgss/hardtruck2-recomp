@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<gameList>
+  <game>
+    <path>./Hard Truck 2.sh</path>
+    <name>Hard Truck 2: King of the Road</name>
+    <desc>Trucking across a big open map: haul cargo, buy better trucks, race rivals and dodge the mafia and the police. A static recompilation of the PC game to native aarch64.</desc>
+    <releasedate>2002</releasedate>
+    <developer>SoftLab-NSK</developer>
+    <genre>Racing</genre>
+    <image>./hardtruck2/screenshot.png</image>
+  </game>
+</gameList>

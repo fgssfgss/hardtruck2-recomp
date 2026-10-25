@@ -19,7 +19,8 @@ LongRoad2's renderer at `bc5fd1d`.
 | M7b | Sound effects (DirectSound) | **done**: win32hle's mixer, unchanged |
 | M7c | Music (DirectShow `CLSID_FilterGraph`) | **done**: `src/shims/quartz.c`, MP3 through libmpg123 |
 | M7d | AVI intros, gamepad | next |
-| M8 | KMSDRM on an ARM handheld, aarch64 native build | |
+| M8a | aarch64 build + PortMaster package | **built** (2026-10-25): `docker/build_aarch64.sh`, `scripts/package_port.sh`; not run on a device yet |
+| M8b | KMSDRM on an ARM handheld | |
 
 ## What it took to get from WinMain to the race
 

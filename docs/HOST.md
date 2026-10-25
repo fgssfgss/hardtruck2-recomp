@@ -25,7 +25,7 @@
 
 | | 64-bit based (default) | 32-bit flat (`-DHT2_FLAT32=ON`) |
 |---|---|---|
-| guest VA -> host | `0x100000000000 + va` | `va` |
+| guest VA -> host | `0x100000000000 + va` (aarch64: `0x4000000000 + va`, for 39-bit kernels) | `va` |
 | runs on | x86-64, aarch64 natively | x86 (box86 on ARM) |
 | shim pointer handling | translated (`hle_ptr`/`hle_va`) | the translation is a no-op |
 

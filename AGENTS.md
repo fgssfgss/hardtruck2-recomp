@@ -56,6 +56,7 @@ scripts/
   run_lift.py        check | catalog | lift [--only VA,..] | all
   import_coverage.py which imports have a shim (src/shims, win32hle) and which don't
   pcrecomp_patches.sh  ../pcrecomp onto branch ht2 = base_commit + patches/pcrecomp
+  package_port.sh    build-aarch64/ht2.aarch64 + port/ -> dist/hardtruck2.zip (PortMaster)
   gfx_diff.sh        src/gfx against ../LongRoad2 (what we changed in the renderer)
   ppm2png.py         frame dumps (LONGROAD2_FRAME_DUMP_DIR) to PNG
 src/host/main.c      the executable: maps C: to the install's parent, boots, runs
@@ -70,6 +71,10 @@ src/shims/           Win32 imports win32hle does not answer (registered FIRST, s
   quartz.c           CLSID_FilterGraph: the MP3 music player (libmpg123 -> win32hle host stream)
   gfx_host.c/.h      the SDL/GLES window, SDL input -> win32hle, HT2_INPUT scripts
 src/gfx/             LongRoad2's ddraw/d3d7/render/GL-thread, vendored + ported (its README.md)
+docker/
+  Dockerfile.aarch64 PortMaster's aarch64 builder image + libmpg123-dev
+  build_aarch64.sh   the aarch64 build in it (qemu on x86) -> build-aarch64/
+port/                the PortMaster port: launcher, gptokeyb map, port.json (its README.md)
 docs/
   STATUS.md          milestones, numbers, what's next
   HOST.md            the runtime design: the COM bridge, window, input
@@ -78,7 +83,8 @@ tests/               (empty) shim tests go here
 game -> ~/.wine/drive_c/HardTruck2     symlink, gitignored
 work/                recon + catalog + Ghidra project, gitignored
 gen/                 lifted C, gitignored
-build/               64-bit build; build32/ for -DHT2_FLAT32=ON
+build/               64-bit build; build32/ for -DHT2_FLAT32=ON; build-aarch64/ from docker
+dist/                packaged port, gitignored
 .venv/               python venv: capstone, pefile, unicorn
 ```
 
@@ -93,6 +99,18 @@ scripts/recon.sh --ghidra                 # ~10 min, mostly Ghidra; without --gh
 cmake -B build -G Ninja && cmake --build build   # ~3 min on 16 threads
 SDL_VIDEODRIVER=wayland ./build/ht2       # --game DIR or $HT2_GAME, default ./game
 ```
+
+For a handheld (aarch64, PortMaster: AmberELEC, ArkOS, ROCKNIX, ...), after
+`run_lift.py all`:
+
+```sh
+docker/build_aarch64.sh                   # build-aarch64/ht2.aarch64: ~glibc 2.31, under qemu on x86
+scripts/package_port.sh                   # dist/hardtruck2.zip, unzip into the device's ports/
+```
+
+`port/README.md` explains the port. The aarch64 build reserves guest memory
+at `0x4000000000` instead (39-bit kernels), so `ADDR(va)` there is
+`0x4000000000 + va`.
 
 Needs SDL2, SDL2_ttf, GLESv2 and libmpg123 (64-bit). On this machine SDL's X11 backend
 hangs in `SDL_CreateWindow` (XWayland never maps the window), so use
